@@ -26,7 +26,7 @@
         "test": "vendor/bin/phpunit",
         "phpcs": "vendor/bin/phpcs --standard=PSR12 src",
         "phpcbf": "vendor/bin/phpcbf --standard=PSR12 src",
-        "analyze": "vendor/bin/phpstan analyze src --level=8"
+        "analyze": "vendor/bin/phpstan analyse"
     },
     "extra": {
         "glueful": {
