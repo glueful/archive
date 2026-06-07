@@ -68,6 +68,6 @@ final class ArchiveServiceProvider extends \Glueful\Extensions\ServiceProvider
 
     public function boot(ApplicationContext $context): void
     {
-        // Command discovery is wired in a later task.
+        $this->discoverCommands('Glueful\\Extensions\\Archive\\Console', __DIR__ . '/Console');
     }
 }
