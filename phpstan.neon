@@ -1,0 +1,8 @@
+parameters:
+    level: 8
+    paths:
+        - src
+    # Mirror the framework's analysis posture so extracted code does not diverge
+    # from how core analyzes it (framework runs treatPhpDocTypesAsCertain: false).
+    treatPhpDocTypesAsCertain: false
+    reportUnmatchedIgnoredErrors: false
