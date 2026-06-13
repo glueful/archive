@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- **Discovery-path regression test.** Loads the provider through the framework's real
+  extension-discovery dispatch (`defs()` pass-through, else `services()` via the DSL loader),
+  guarding against typed `Definition` objects being returned from `services()` — a regression the
+  existing `Container::load()`-based tests cannot catch.
+
+### Fixed
+
+- **Boot compatibility with framework 1.55.** The service provider declared its bindings via the
+  DSL `services()` method but returned strongly-typed `DefinitionInterface` objects, which the
+  framework's DSL service loader rejects (`"Service '<id>' must be an array"`). Under framework
+  1.55 this threw during boot in dev/test and silently dropped the bindings in production. The
+  method is now `defs()`, the strongly-typed pass-through path that accepts `DefinitionInterface`
+  objects.
+
 ## [1.0.0] - 2026-06-07 — Initial release (extracted from Glueful framework 1.52.0)
 
 Data-lifecycle archiving, extracted from framework core in **Glueful framework 1.52.0**.

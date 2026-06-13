@@ -17,7 +17,7 @@ final class ArchiveServiceProvider extends \Glueful\Extensions\ServiceProvider
     /**
      * @return array<string, mixed>
      */
-    public static function services(): array
+    public static function defs(): array
     {
         $defs = [];
 

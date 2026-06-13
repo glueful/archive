@@ -7,7 +7,9 @@ namespace Glueful\Extensions\Archive\Tests\Unit;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Bootstrap\ConfigurationLoader;
 use Glueful\Container\Definition\AliasDefinition;
+use Glueful\Container\Definition\DefinitionInterface;
 use Glueful\Container\Definition\FactoryDefinition;
+use Glueful\Container\Loader\DefaultServicesLoader;
 use Glueful\Database\Connection;
 use Glueful\Database\Migrations\MigrationManager;
 use Glueful\Database\Migrations\MigrationPriority;
@@ -36,7 +38,7 @@ final class ArchiveServiceProviderTest extends TestCase
 
     public function testServicesAreKeyedByInterfaceAndConcreteClass(): void
     {
-        $defs = ArchiveServiceProvider::services();
+        $defs = ArchiveServiceProvider::defs();
 
         self::assertArrayHasKey(ArchiveServiceInterface::class, $defs);
         self::assertArrayHasKey(ArchiveService::class, $defs);
@@ -48,13 +50,41 @@ final class ArchiveServiceProviderTest extends TestCase
         self::assertSame(ArchiveServiceInterface::class, $alias->getTarget());
     }
 
+    /**
+     * Discovery-path guard. Loads the provider the way ContainerFactory::loadExtensionDefinitions
+     * does: a `defs()` map passes through as DefinitionInterface objects; a `services()` map is
+     * compiled by DefaultServicesLoader, which REJECTS non-array specs. Fails loudly if typed
+     * Definition objects are ever returned from `services()` (they belong in `defs()`) — a
+     * regression the Container::load()-based tests cannot catch.
+     */
+    public function testLoadsThroughExtensionDiscoveryDispatch(): void
+    {
+        $provider = ArchiveServiceProvider::class;
+
+        if (method_exists($provider, 'defs')) {
+            $defs = (array) $provider::defs();
+        } else {
+            $defs = (new DefaultServicesLoader())->load($provider::services(), $provider, false);
+        }
+
+        self::assertNotEmpty($defs);
+        self::assertArrayHasKey(ArchiveServiceInterface::class, $defs);
+        foreach ($defs as $id => $def) {
+            self::assertInstanceOf(
+                DefinitionInterface::class,
+                $def,
+                "Definition for '{$id}' must be a DefinitionInterface after discovery-path loading"
+            );
+        }
+    }
+
     public function testFactoryResolvesArchiveServiceFromContainer(): void
     {
         $sentinel = sys_get_temp_dir() . '/archive-' . uniqid('', true);
         $context = $this->makeContext(['storage' => ['path' => $sentinel]]);
         $container = $this->makeContainer($context);
 
-        $defs = ArchiveServiceProvider::services();
+        $defs = ArchiveServiceProvider::defs();
         /** @var FactoryDefinition $factory */
         $factory = $defs[ArchiveServiceInterface::class];
 
@@ -79,7 +109,7 @@ final class ArchiveServiceProviderTest extends TestCase
         $context = $this->makeContext(['storage' => ['path' => $sentinel]]);
         $container = $this->makeContainer($context);
 
-        $defs = ArchiveServiceProvider::services();
+        $defs = ArchiveServiceProvider::defs();
         /** @var FactoryDefinition $factory */
         $factory = $defs[ArchiveServiceInterface::class];
 
