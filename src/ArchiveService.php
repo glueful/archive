@@ -61,6 +61,7 @@ class ArchiveService implements ArchiveServiceInterface
             'encryption_key' => $_ENV['ARCHIVE_ENCRYPTION_KEY'] ?? null,
             'compression' => 'gzip',
             'chunk_size' => 10000,
+            'max_archive_size' => $this->getConfig('archive.storage.max_archive_size', 1073741824),
             'verify_checksums' => true,
             'retention_policies' => [],
             'allowed_tables' => [],
@@ -80,7 +81,7 @@ class ArchiveService implements ArchiveServiceInterface
         ], $config);
 
         $this->archiveBasePath = $this->config['storage_path'];
-        $this->encryptionKey = $this->config['encryption_key'];
+        $this->encryptionKey = $this->normalizeEncryptionKey($this->config['encryption_key']);
 
         // Ensure archive directory exists as local root for the disk
         if (
@@ -1074,16 +1075,14 @@ class ArchiveService implements ArchiveServiceInterface
 
             // Read the archive file
             $fileData = $this->storage->disk($this->disk)->read($relative);
+            $this->assertArchivePayloadWithinLimit($fileData);
 
-            // Verify checksum if configured
-            if ((bool)($this->config['verify_checksums'] ?? false)) {
-                $currentChecksum = hash('sha256', $fileData);
-                if ($currentChecksum !== $archive['checksum_sha256']) {
-                    throw BusinessLogicException::operationNotAllowed(
-                        'archive_restore',
-                        'Archive file corrupted - checksum mismatch'
-                    );
-                }
+            $currentChecksum = hash('sha256', $fileData);
+            if ($currentChecksum !== $archive['checksum_sha256']) {
+                throw BusinessLogicException::operationNotAllowed(
+                    'archive_restore',
+                    'Archive file corrupted - checksum mismatch'
+                );
             }
 
             // Decrypt if encryption was used
@@ -1152,6 +1151,39 @@ class ArchiveService implements ArchiveServiceInterface
         return $decrypted;
     }
 
+    private function normalizeEncryptionKey(mixed $key): ?string
+    {
+        if ($key === null || $key === '') {
+            return null;
+        }
+
+        if (!is_string($key)) {
+            throw new \InvalidArgumentException('Archive encryption key must be exactly 32 bytes');
+        }
+
+        if (strlen($key) === 32) {
+            return $key;
+        }
+
+        $decoded = base64_decode($key, true);
+        if (is_string($decoded) && strlen($decoded) === 32) {
+            return $decoded;
+        }
+
+        throw new \InvalidArgumentException('Archive encryption key must be exactly 32 bytes');
+    }
+
+    private function assertArchivePayloadWithinLimit(string $payload): void
+    {
+        $maxArchiveSize = (int) ($this->config['max_archive_size'] ?? 0);
+        if ($maxArchiveSize > 0 && strlen($payload) > $maxArchiveSize) {
+            throw BusinessLogicException::operationNotAllowed(
+                'archive_restore',
+                'Archive payload exceeds maximum archive size'
+            );
+        }
+    }
+
     /**
      * Decompress archive data
      *
@@ -1168,10 +1200,12 @@ class ArchiveService implements ArchiveServiceInterface
 
         switch ($compressionType) {
             case 'gzip':
-                $decompressed = gzdecode($compressedData);
+                $maxArchiveSize = (int) ($this->config['max_archive_size'] ?? 0);
+                $decompressed = gzdecode($compressedData, $maxArchiveSize > 0 ? $maxArchiveSize + 1 : 0);
                 if ($decompressed === false) {
                     throw new \Exception("Failed to decompress gzip data");
                 }
+                $this->assertArchivePayloadWithinLimit($decompressed);
                 return $decompressed;
 
             case 'bzip2':
@@ -1179,9 +1213,11 @@ class ArchiveService implements ArchiveServiceInterface
                 if ($decompressed === false || is_int($decompressed)) {
                     throw new \Exception("Failed to decompress bzip2 data");
                 }
+                $this->assertArchivePayloadWithinLimit($decompressed);
                 return $decompressed;
 
             case 'none':
+                $this->assertArchivePayloadWithinLimit($compressedData);
                 return $compressedData;
 
             default:

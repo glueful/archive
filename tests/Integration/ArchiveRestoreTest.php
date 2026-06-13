@@ -316,6 +316,52 @@ SQL;
         self::assertSame(['late_insert'], array_column($this->fetchAllRecords(), 'uuid'));
     }
 
+    public function testRestoreAlwaysRejectsChecksumMismatch(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        $tampered = gzencode((string) json_encode([
+            'metadata' => ['compression' => 'gzip', 'encryption_enabled' => false],
+            'data' => [
+                ['uuid' => 'rec_999', 'payload' => 'tampered', 'created_at' => '2020-01-01 00:00:00'],
+            ],
+        ]));
+        self::assertIsString($tampered);
+        file_put_contents((string) $archive['file_path'], $tampered);
+        $this->truncateSourceTable();
+
+        $service = $this->makeService(['verify_checksums' => false]);
+        $result = $service->restoreFromArchive($archiveUuid);
+
+        self::assertFalse($result->success);
+        self::assertStringContainsString('checksum mismatch', (string) $result->error);
+        self::assertSame([], $this->fetchAllRecords());
+    }
+
+    public function testEncryptionKeyMustBeExactlyThirtyTwoBytes(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Archive encryption key must be exactly 32 bytes');
+
+        $this->makeService(['encryption_key' => 'short']);
+    }
+
+    public function testRestoreRejectsArchivesThatExpandPastConfiguredSizeLimit(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $this->truncateSourceTable();
+
+        $service = $this->makeService(['max_archive_size' => 32]);
+        $result = $service->restoreFromArchive($archiveUuid);
+
+        self::assertFalse($result->success);
+        self::assertStringContainsString('exceeds maximum archive size', (string) $result->error);
+        self::assertSame([], $this->fetchAllRecords());
+    }
+
     private function seedRecords(int $count): void
     {
         $stmt = $this->connection->getPDO()->prepare(
@@ -338,6 +384,40 @@ SQL;
         self::assertNotNull($result->archiveUuid);
 
         return (string) $result->archiveUuid;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function fetchArchiveRecord(string $archiveUuid): array
+    {
+        $stmt = $this->connection->getPDO()->prepare('SELECT * FROM archive_registry WHERE uuid = ?');
+        $stmt->execute([$archiveUuid]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        self::assertIsArray($row);
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function makeService(array $config): ArchiveService
+    {
+        return new ArchiveService(
+            connection: $this->connection,
+            config: array_merge([
+                'storage_path' => $this->archiveDir,
+                'compression' => 'gzip',
+                'verify_checksums' => true,
+                'chunk_size' => 100,
+                'allowed_tables' => ['sample_records', 'api_metrics_daily'],
+                'retention_policies' => [
+                    'sample_records' => ['date_column' => 'created_at'],
+                    'api_metrics_daily' => ['date_column' => 'metric_date'],
+                ],
+            ], $config)
+        );
     }
 
     private function truncateSourceTable(): void

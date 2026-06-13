@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Restore integrity and archive payload bounds.** Restore now always verifies archive checksums,
+  enforces configured archive-size limits before and after decompression, and rejects encryption keys
+  that are not exactly 32 bytes raw or base64-decoded.
 - **Archive CLI destructive-operation guardrails.** `archive:manage archive` now rejects non-positive
   retention windows, reports the actual matching row count during `--dry-run`, and requires
   interactive confirmation unless `--force` is provided.
