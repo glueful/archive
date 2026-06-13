@@ -190,6 +190,21 @@ class ArchiveService implements ArchiveServiceInterface
         }
     }
 
+    public function countArchivableRows(string $table, \DateTime $cutoffDate): int
+    {
+        $this->assertTableCanBeArchived($table);
+        if (!$this->validateTable($table)) {
+            throw BusinessLogicException::operationNotAllowed(
+                'archive_table_missing',
+                "Table {$table} does not exist"
+            );
+        }
+
+        return $this->db->table($table)
+            ->where($this->getArchiveDateColumn($table), '<', $cutoffDate->format('Y-m-d H:i:s'))
+            ->count();
+    }
+
     private function exportTableData(string $table, \DateTime $cutoffDate, string $dateColumn): ExportResult
     {
         $data = [];

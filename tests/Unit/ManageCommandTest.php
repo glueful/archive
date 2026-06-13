@@ -9,10 +9,21 @@ use Glueful\Console\BaseCommand;
 use Glueful\Extensions\Archive\ArchiveServiceInterface;
 use Glueful\Extensions\Archive\ArchiveServiceProvider;
 use Glueful\Extensions\Archive\Console\ManageCommand;
+use Glueful\Extensions\Archive\DTOs\ArchiveResult;
+use Glueful\Extensions\Archive\DTOs\ArchiveRestoreOptions;
+use Glueful\Extensions\Archive\DTOs\ArchiveSearchQuery;
+use Glueful\Extensions\Archive\DTOs\ArchiveSearchResult;
+use Glueful\Extensions\Archive\DTOs\ArchiveSummary;
+use Glueful\Extensions\Archive\DTOs\RestoreResult;
+use Glueful\Extensions\Archive\DTOs\TableArchiveStats;
 use Glueful\Extensions\ServiceProvider;
+use Glueful\Services\FileFinder;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Tester\CommandTester;
 
 final class ManageCommandTest extends TestCase
 {
@@ -83,9 +94,84 @@ final class ManageCommandTest extends TestCase
         self::assertContains(ManageCommand::class, $deferred);
     }
 
+    public function testArchiveRejectsNonPositiveDaysBeforeCallingService(): void
+    {
+        $service = new RecordingArchiveService();
+        $tester = $this->tester($service);
+
+        $exitCode = $tester->execute(['action' => 'archive', 'table' => 'sample_records', 'days' => '0']);
+
+        self::assertSame(1, $exitCode);
+        self::assertStringContainsString('Days must be a positive integer', $tester->getDisplay());
+        self::assertSame(0, $service->archiveCalls);
+    }
+
+    public function testArchiveDryRunShowsMatchingRecordCountWithoutArchiving(): void
+    {
+        $service = new RecordingArchiveService();
+        $service->candidateCount = 7;
+        $tester = $this->tester($service);
+
+        $exitCode = $tester->execute([
+            'action' => 'archive',
+            'table' => 'sample_records',
+            'days' => '30',
+            '--dry-run' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Matching records: 7', $tester->getDisplay());
+        self::assertSame(0, $service->archiveCalls);
+    }
+
+    public function testArchiveRequiresConfirmationWithoutForce(): void
+    {
+        $service = new RecordingArchiveService();
+        $tester = $this->tester($service);
+        $tester->setInputs(['no']);
+
+        $exitCode = $tester->execute(['action' => 'archive', 'table' => 'sample_records', 'days' => '30']);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Archive cancelled', $tester->getDisplay());
+        self::assertSame(0, $service->archiveCalls);
+    }
+
+    public function testArchiveForceSkipsConfirmationAndArchives(): void
+    {
+        $service = new RecordingArchiveService();
+        $tester = $this->tester($service);
+
+        $exitCode = $tester->execute([
+            'action' => 'archive',
+            'table' => 'sample_records',
+            'days' => '30',
+            '--force' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+        self::assertSame(1, $service->archiveCalls);
+    }
+
     private function makeContext(): ApplicationContext
     {
         return new ApplicationContext(sys_get_temp_dir(), 'testing');
+    }
+
+    private function tester(RecordingArchiveService $service): CommandTester
+    {
+        $command = new ManageCommand();
+        $container = $this->makeContainer([
+            ArchiveServiceInterface::class => $service,
+            FileFinder::class => new FileFinder(new NullLogger()),
+            LoggerInterface::class => new NullLogger(),
+        ]);
+
+        $property = new \ReflectionProperty(BaseCommand::class, 'container');
+        $property->setAccessible(true);
+        $property->setValue($command, $container);
+
+        return new CommandTester($command);
     }
 
     /**
@@ -113,5 +199,73 @@ final class ManageCommandTest extends TestCase
                 return array_key_exists($id, $this->services);
             }
         };
+    }
+}
+
+final class RecordingArchiveService implements ArchiveServiceInterface
+{
+    public int $archiveCalls = 0;
+    public int $candidateCount = 3;
+
+    public function archiveTable(string $table, \DateTime $cutoffDate): ArchiveResult
+    {
+        $this->archiveCalls++;
+        return ArchiveResult::success('archive-uuid', 3, 128, '/tmp/archive.gz');
+    }
+
+    public function countArchivableRows(string $table, \DateTime $cutoffDate): int
+    {
+        return $this->candidateCount;
+    }
+
+    public function searchArchives(ArchiveSearchQuery $query): ArchiveSearchResult
+    {
+        return new ArchiveSearchResult([], 0, [], 0.0);
+    }
+
+    public function restoreFromArchive(string $archiveUuid, ?ArchiveRestoreOptions $options = null): RestoreResult
+    {
+        return RestoreResult::failure('not implemented');
+    }
+
+    public function verifyArchive(string $archiveUuid): bool
+    {
+        return true;
+    }
+
+    public function deleteArchive(string $archiveUuid): bool
+    {
+        return true;
+    }
+
+    public function getTableStats(string $table): ?TableArchiveStats
+    {
+        return new TableArchiveStats(
+            tableName: $table,
+            currentRowCount: 10,
+            currentSizeBytes: 1024,
+            lastArchiveDate: null,
+            nextArchiveDate: null,
+            needsArchive: true
+        );
+    }
+
+    public function trackTableGrowth(string $table): void
+    {
+    }
+
+    public function getArchiveSummary(): ArchiveSummary
+    {
+        return new ArchiveSummary(0, 0, 0, [], null, null);
+    }
+
+    public function getTablesNeedingArchival(): array
+    {
+        return [];
+    }
+
+    public function getTableArchives(string $table): array
+    {
+        return [];
     }
 }

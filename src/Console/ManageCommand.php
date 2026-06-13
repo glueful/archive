@@ -117,6 +117,12 @@ class ManageCommand extends BaseCommand
                  'Show what would be done without executing'
              )
              ->addOption(
+                 'force',
+                 null,
+                 InputOption::VALUE_NONE,
+                 'Execute destructive archive operations without interactive confirmation'
+             )
+             ->addOption(
                  'backup',
                  'b',
                  InputOption::VALUE_NONE,
@@ -202,8 +208,14 @@ class ManageCommand extends BaseCommand
             return self::FAILURE;
         }
 
-        $days = (int) $input->getArgument('days');
+        $days = $this->parsePositiveDays($input->getArgument('days'));
+        if ($days === null) {
+            $this->io->error('Days must be a positive integer');
+            return self::FAILURE;
+        }
+
         $dryRun = $input->getOption('dry-run');
+        $force = $input->getOption('force');
         $backup = $input->getOption('backup');
         $compress = $input->getOption('compress');
         $verifyIntegrity = $input->getOption('verify-integrity');
@@ -219,6 +231,8 @@ class ManageCommand extends BaseCommand
 
         // Pre-archive checks
         $this->performPreArchiveChecks($table, $cutoffDate);
+        $candidateCount = $this->archiveService->countArchivableRows($table, $cutoffDate);
+        $this->io->text('Matching records: ' . number_format($candidateCount));
 
         if ((bool) $backup && !(bool) $dryRun) {
             $this->createTableBackup($table);
@@ -226,6 +240,17 @@ class ManageCommand extends BaseCommand
 
         if ((bool) $dryRun) {
             $this->io->success('Dry run completed. Use without --dry-run to execute.');
+            return self::SUCCESS;
+        }
+
+        $confirmationMessage = sprintf(
+            'Archive and delete %s matching records from %s?',
+            number_format($candidateCount),
+            $table
+        );
+        $confirmed = (bool) $force || $this->io->confirm($confirmationMessage, false);
+        if (!$confirmed) {
+            $this->io->warning('Archive cancelled');
             return self::SUCCESS;
         }
 
@@ -262,6 +287,21 @@ class ManageCommand extends BaseCommand
         }
 
         return self::SUCCESS;
+    }
+
+    private function parsePositiveDays(mixed $value): ?int
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $days = (string) $value;
+        if (!ctype_digit($days)) {
+            return null;
+        }
+
+        $parsed = (int) $days;
+        return $parsed > 0 ? $parsed : null;
     }
 
     private function executeStatus(InputInterface $input): int

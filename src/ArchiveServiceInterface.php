@@ -31,6 +31,15 @@ interface ArchiveServiceInterface
     public function archiveTable(string $table, \DateTime $cutoffDate): ArchiveResult;
 
     /**
+     * Count rows that would be archived for the specified cutoff date
+     *
+     * @param string $table Table name to inspect
+     * @param \DateTime $cutoffDate Rows older than this date are candidates
+     * @return int Number of candidate rows
+     */
+    public function countArchivableRows(string $table, \DateTime $cutoffDate): int;
+
+    /**
      * Search across archived data
      *
      * @param ArchiveSearchQuery $query Search criteria

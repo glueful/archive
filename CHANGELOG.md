@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Archive CLI destructive-operation guardrails.** `archive:manage archive` now rejects non-positive
+  retention windows, reports the actual matching row count during `--dry-run`, and requires
+  interactive confirmation unless `--force` is provided.
 - **Destructive archive safety.** Archive operations now enforce explicit allowed/denied table policy,
   honor per-table retention `date_column` settings, wrap archive registration/search/delete in a
   transaction, and hard-delete only the primary keys captured in the exported snapshot.
