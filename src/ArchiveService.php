@@ -150,6 +150,8 @@ class ArchiveService implements ArchiveServiceInterface
                     'record_count' => $exportResult->recordCount,
                     'file_path' => $archiveFile->path,
                     'file_size' => $archiveFile->size,
+                    'compression_type' => $exportResult->metadata['compression'],
+                    'encryption_enabled' => $this->encryptionKey !== null,
                     'checksum_sha256' => $archiveFile->checksum,
                     'metadata' => json_encode($exportResult->metadata)
                 ]);
@@ -492,17 +494,14 @@ class ArchiveService implements ArchiveServiceInterface
                 return false;
             }
 
-            // Check file exists
-            if (!file_exists($archive['file_path'])) {
+            $relative = $this->toRelativePath((string) $archive['file_path']);
+            if (!$this->storage->disk($this->disk)->fileExists($relative)) {
                 return false;
             }
 
             // Verify checksum if configured
             if ((bool)($this->config['verify_checksums'] ?? false)) {
-                $fileContents = file_get_contents($archive['file_path']);
-                if ($fileContents === false) {
-                    return false;
-                }
+                $fileContents = $this->storage->disk($this->disk)->read($relative);
                 $currentChecksum = hash('sha256', $fileContents);
                 if ($currentChecksum !== $archive['checksum_sha256']) {
                     $this->updateArchiveStatus($archiveUuid, 'corrupted');
@@ -734,9 +733,9 @@ class ArchiveService implements ArchiveServiceInterface
                 return false;
             }
 
-            // Delete physical file
-            if (file_exists($archive['file_path'])) {
-                unlink($archive['file_path']);
+            $relative = $this->toRelativePath((string) $archive['file_path']);
+            if ($this->storage->disk($this->disk)->fileExists($relative)) {
+                $this->storage->disk($this->disk)->delete($relative);
             }
 
             // Delete from database (cascade will handle search indexes)

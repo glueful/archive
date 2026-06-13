@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Archive storage and registry consistency.** Archive registry rows now record actual compression
+  and encryption state, and archive verification/deletion uses the configured archive storage disk
+  instead of raw filesystem calls.
 - **Sensitive archive search output.** `archive:manage search` now redacts sensitive record fields
   by default and requires `--show-sensitive` before printing decrypted values such as email,
   tokens, keys, or user/IP identifiers.

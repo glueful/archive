@@ -53,6 +53,8 @@ final class ArchiveRestoreTest extends TestCase
                 record_count INTEGER,
                 file_path TEXT,
                 file_size INTEGER,
+                compression_type TEXT DEFAULT "gzip",
+                encryption_enabled INTEGER DEFAULT 1,
                 checksum_sha256 TEXT,
                 metadata TEXT,
                 status TEXT DEFAULT "completed",
@@ -392,6 +394,33 @@ SQL;
         self::assertFalse($result->healthy);
         self::assertContains('missing-archive', $result->metrics['missing_archives'] ?? []);
         self::assertSame('completed', $this->fetchArchiveRecord('missing-archive')['status']);
+    }
+
+    public function testArchiveRegistryRecordsActualCompressionAndEncryptionState(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        self::assertSame('gzip', $archive['compression_type']);
+        self::assertSame(0, (int) $archive['encryption_enabled']);
+    }
+
+    public function testVerifyAndDeleteArchiveUseStoredArchiveFile(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        self::assertTrue($this->service->verifyArchive($archiveUuid));
+        self::assertTrue(file_exists((string) $archive['file_path']));
+
+        self::assertTrue($this->service->deleteArchive($archiveUuid));
+        self::assertFalse(file_exists((string) $archive['file_path']));
+        self::assertSame([], $this->connection->getPDO()
+            ->query("SELECT uuid FROM archive_registry WHERE uuid = '{$archiveUuid}'")
+            ?->fetchAll(\PDO::FETCH_COLUMN));
     }
 
     private function seedRecords(int $count): void
