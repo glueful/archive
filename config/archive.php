@@ -37,7 +37,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Configure compression and encryption settings for archived data.
-    | Available compression: gzip, bzip2, none
+    | Available compression: gzip, bzip2, none.
+    | Without ARCHIVE_ENCRYPTION_KEY, archives are compressed plaintext. For
+    | PII/compliance data, set a raw 32-byte key or a base64-encoded 32-byte key.
     |
     */
     'compression' => [
@@ -235,7 +237,8 @@ return [
     | Scheduled Jobs
     |--------------------------------------------------------------------------
     |
-    | Configure automatic archiving schedules and maintenance tasks.
+    | Configure preferences used by the CLI auto/track workflows. This block
+    | does not register framework scheduler jobs by itself.
     |
     */
     'schedule' => [

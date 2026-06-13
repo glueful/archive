@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Operator documentation.** README/config wording now documents plaintext archive behavior without
+  an encryption key, the 32-byte key requirement, default table allow/deny policy, redacted search
+  output, and that schedule config is consumed by CLI workflows rather than registering jobs.
 - **Archive storage and registry consistency.** Archive registry rows now record actual compression
   and encryption state, and archive verification/deletion uses the configured archive storage disk
   instead of raw filesystem calls.
