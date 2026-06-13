@@ -15,6 +15,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Health-check false greens.** Archive health checks now surface archive database/query failures
+  as unhealthy issues instead of logging them and returning empty metrics.
 - **Operator documentation.** README/config wording now documents plaintext archive behavior without
   an encryption key, the 32-byte key requirement, default table allow/deny policy, redacted search
   output, and that schedule config is consumed by CLI workflows rather than registering jobs.

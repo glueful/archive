@@ -150,7 +150,7 @@ class ArchiveHealthChecker
                 }
             }
         } catch (\Exception $e) {
-            error_log("Error checking archive corruption: " . $e->getMessage());
+            throw new \RuntimeException("Error checking archive corruption: " . $e->getMessage(), 0, $e);
         }
 
         return $corrupted;
@@ -186,7 +186,7 @@ class ArchiveHealthChecker
 
             $archiveSize = $result['total_size'] ?? 0;
         } catch (\Exception $e) {
-            error_log("Error calculating archive size: " . $e->getMessage());
+            throw new \RuntimeException("Error calculating archive size: " . $e->getMessage(), 0, $e);
         }
 
         return [
@@ -220,7 +220,7 @@ class ArchiveHealthChecker
                 }
             }
         } catch (\Exception $e) {
-            error_log("Error checking missing archives: " . $e->getMessage());
+            throw new \RuntimeException("Error checking missing archives: " . $e->getMessage(), 0, $e);
         }
 
         return $missing;
@@ -238,8 +238,7 @@ class ArchiveHealthChecker
                 ->where('status', 'failed')
                 ->count();
         } catch (\Exception $e) {
-            error_log("Error counting failed archives: " . $e->getMessage());
-            return 0;
+            throw new \RuntimeException("Error counting failed archives: " . $e->getMessage(), 0, $e);
         }
     }
 
@@ -300,14 +299,7 @@ class ArchiveHealthChecker
                 'total' => $total
             ];
         } catch (\Exception $e) {
-            error_log("Error checking archive age distribution: " . $e->getMessage());
-            return [
-                'last_week' => 0,
-                'last_month' => 0,
-                'last_quarter' => 0,
-                'last_year' => 0,
-                'total' => 0
-            ];
+            throw new \RuntimeException("Error checking archive age distribution: " . $e->getMessage(), 0, $e);
         }
     }
 
@@ -341,8 +333,7 @@ class ArchiveHealthChecker
 
             return $staleCount;
         } catch (\Exception $e) {
-            error_log("Error checking stale archives: " . $e->getMessage());
-            return 0;
+            throw new \RuntimeException("Error checking stale archives: " . $e->getMessage(), 0, $e);
         }
     }
 

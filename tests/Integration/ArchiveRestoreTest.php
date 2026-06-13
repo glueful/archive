@@ -407,6 +407,18 @@ SQL;
         self::assertSame(0, (int) $archive['encryption_enabled']);
     }
 
+    public function testHealthCheckReportsDatabaseErrorsAsUnhealthy(): void
+    {
+        $this->connection->getPDO()->exec('DROP TABLE archive_registry');
+
+        $checker = new ArchiveHealthChecker($this->connection, ['storage_path' => $this->archiveDir]);
+        $result = $checker->performHealthCheck();
+
+        self::assertFalse($result->healthy);
+        self::assertNotEmpty($result->issues);
+        self::assertStringContainsString('Health check error', $result->issues[0]);
+    }
+
     public function testVerifyAndDeleteArchiveUseStoredArchiveFile(): void
     {
         $this->seedRecords(1);
