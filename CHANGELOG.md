@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Sensitive archive search output.** `archive:manage search` now redacts sensitive record fields
+  by default and requires `--show-sensitive` before printing decrypted values such as email,
+  tokens, keys, or user/IP identifiers.
 - **Non-mutating health checks.** Archive health checks now report missing/corrupted archives without
   rewriting registry status rows, and the CLI health command passes the active application context to
   the checker.

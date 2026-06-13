@@ -111,6 +111,12 @@ class ManageCommand extends BaseCommand
                  'table'
              )
              ->addOption(
+                 'show-sensitive',
+                 null,
+                 InputOption::VALUE_NONE,
+                 'Show decrypted archive record values without redacting sensitive fields'
+             )
+             ->addOption(
                  'dry-run',
                  'd',
                  InputOption::VALUE_NONE,
@@ -398,7 +404,7 @@ class ManageCommand extends BaseCommand
 
         if ($results->records !== []) {
             $format = $input->getOption('format');
-            $this->displaySearchResults($results->records, $format);
+            $this->displaySearchResults($results->records, $format, (bool) $input->getOption('show-sensitive'));
         } else {
             $this->io->warning('No records found matching the search criteria');
         }
@@ -748,8 +754,10 @@ class ManageCommand extends BaseCommand
     /**
      * @param array<array<string, mixed>> $records
      */
-    private function displaySearchResults(array $records, string $format): void
+    private function displaySearchResults(array $records, string $format, bool $showSensitive): void
     {
+        $records = $showSensitive ? $records : $this->redactSensitiveRecords($records);
+
         switch ($format) {
             case 'json':
                 $this->io->text((string) json_encode($records, JSON_PRETTY_PRINT));
@@ -766,6 +774,51 @@ class ManageCommand extends BaseCommand
                 }
                 break;
         }
+    }
+
+    /**
+     * @param array<array<string, mixed>> $records
+     * @return array<array<string, mixed>>
+     */
+    private function redactSensitiveRecords(array $records): array
+    {
+        return array_map(
+            fn (array $record): array => $this->redactSensitiveValues($record),
+            $records
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $record
+     * @return array<string, mixed>
+     */
+    private function redactSensitiveValues(array $record): array
+    {
+        foreach ($record as $key => $value) {
+            if ($this->isSensitiveField((string) $key)) {
+                $record[$key] = '[redacted]';
+                continue;
+            }
+
+            if (is_array($value)) {
+                /** @var array<string, mixed> $value */
+                $record[$key] = $this->redactSensitiveValues($value);
+            }
+        }
+
+        return $record;
+    }
+
+    private function isSensitiveField(string $key): bool
+    {
+        $normalized = strtolower($key);
+        foreach (['email', 'phone', 'token', 'secret', 'password', 'key', 'ip_address', 'user_uuid'] as $needle) {
+            if (str_contains($normalized, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

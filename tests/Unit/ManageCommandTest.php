@@ -153,6 +153,40 @@ final class ManageCommandTest extends TestCase
         self::assertSame(1, $service->archiveCalls);
     }
 
+    public function testSearchRedactsSensitiveFieldsByDefault(): void
+    {
+        $service = new RecordingArchiveService();
+        $service->searchRecords = [
+            ['uuid' => 'record-1', 'email' => 'editor@example.com', 'token' => 'secret-token', 'payload' => 'safe'],
+        ];
+        $tester = $this->tester($service);
+
+        $exitCode = $tester->execute(['action' => 'search', '--format' => 'json']);
+        $display = $tester->getDisplay();
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('[redacted]', $display);
+        self::assertStringNotContainsString('editor@example.com', $display);
+        self::assertStringNotContainsString('secret-token', $display);
+        self::assertStringContainsString('safe', $display);
+    }
+
+    public function testSearchCanShowSensitiveFieldsWhenExplicitlyRequested(): void
+    {
+        $service = new RecordingArchiveService();
+        $service->searchRecords = [
+            ['uuid' => 'record-1', 'email' => 'editor@example.com', 'token' => 'secret-token', 'payload' => 'safe'],
+        ];
+        $tester = $this->tester($service);
+
+        $exitCode = $tester->execute(['action' => 'search', '--format' => 'json', '--show-sensitive' => true]);
+        $display = $tester->getDisplay();
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('editor@example.com', $display);
+        self::assertStringContainsString('secret-token', $display);
+    }
+
     private function makeContext(): ApplicationContext
     {
         return new ApplicationContext(sys_get_temp_dir(), 'testing');
@@ -206,6 +240,8 @@ final class RecordingArchiveService implements ArchiveServiceInterface
 {
     public int $archiveCalls = 0;
     public int $candidateCount = 3;
+    /** @var array<int, array<string, mixed>> */
+    public array $searchRecords = [];
 
     public function archiveTable(string $table, \DateTime $cutoffDate): ArchiveResult
     {
@@ -220,7 +256,7 @@ final class RecordingArchiveService implements ArchiveServiceInterface
 
     public function searchArchives(ArchiveSearchQuery $query): ArchiveSearchResult
     {
-        return new ArchiveSearchResult([], 0, [], 0.0);
+        return new ArchiveSearchResult($this->searchRecords, count($this->searchRecords), ['archive-uuid'], 0.0);
     }
 
     public function restoreFromArchive(string $archiveUuid, ?ArchiveRestoreOptions $options = null): RestoreResult
