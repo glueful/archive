@@ -435,7 +435,9 @@ class ManageCommand extends BaseCommand
 
         try {
             $healthChecker = new ArchiveHealthChecker(
-                $this->getService(\Glueful\Database\Connection::class)
+                $this->getService(\Glueful\Database\Connection::class),
+                [],
+                $this->getContext()
             );
 
             $report = $healthChecker->getDetailedHealthReport();

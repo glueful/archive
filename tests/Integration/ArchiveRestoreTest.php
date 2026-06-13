@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Glueful\Extensions\Archive\Tests\Integration;
 
 use Glueful\Database\Connection;
+use Glueful\Extensions\Archive\ArchiveHealthChecker;
 use Glueful\Extensions\Archive\ArchiveService;
 use Glueful\Extensions\Archive\DTOs\ArchiveRestoreOptions;
 use PHPUnit\Framework\TestCase;
@@ -365,6 +366,32 @@ SQL;
         self::assertFalse($result->success);
         self::assertStringContainsString('exceeds maximum archive size', (string) $result->error);
         self::assertSame([], $this->fetchAllRecords());
+    }
+
+    public function testHealthCheckReportsMissingArchivesWithoutMutatingStatus(): void
+    {
+        $this->connection->getPDO()->prepare(
+            'INSERT INTO archive_registry
+                (uuid, table_name, archive_date, record_count, file_path, file_size, checksum_sha256, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            'missing-archive',
+            'sample_records',
+            '2026-01-01',
+            1,
+            $this->archiveDir . '/missing.gz',
+            10,
+            'checksum',
+            'completed',
+            '2026-01-01 00:00:00',
+        ]);
+
+        $checker = new ArchiveHealthChecker($this->connection, ['storage_path' => $this->archiveDir]);
+        $result = $checker->performHealthCheck();
+
+        self::assertFalse($result->healthy);
+        self::assertContains('missing-archive', $result->metrics['missing_archives'] ?? []);
+        self::assertSame('completed', $this->fetchArchiveRecord('missing-archive')['status']);
     }
 
     private function seedRecords(int $count): void

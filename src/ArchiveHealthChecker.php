@@ -147,11 +147,6 @@ class ArchiveHealthChecker
                 $currentChecksum = hash_file('sha256', $archive['file_path']);
                 if ($currentChecksum !== $archive['checksum_sha256']) {
                     $corrupted[] = $archive['uuid'];
-
-                    // Update status in database
-                    $this->db->table('archive_registry')
-                        ->where('uuid', $archive['uuid'])
-                        ->update(['status' => 'corrupted']);
                 }
             }
         } catch (\Exception $e) {
@@ -222,11 +217,6 @@ class ArchiveHealthChecker
             foreach ($archives as $archive) {
                 if (!file_exists($archive['file_path'])) {
                     $missing[] = $archive['uuid'];
-
-                    // Update status in database
-                    $this->db->table('archive_registry')
-                        ->where('uuid', $archive['uuid'])
-                        ->update(['status' => 'missing']);
                 }
             }
         } catch (\Exception $e) {

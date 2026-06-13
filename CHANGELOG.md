@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Non-mutating health checks.** Archive health checks now report missing/corrupted archives without
+  rewriting registry status rows, and the CLI health command passes the active application context to
+  the checker.
 - **Private archive directories.** Service and CLI archive-directory creation now use owner-only
   `0700` permissions instead of world-readable `0755`.
 - **Restore integrity and archive payload bounds.** Restore now always verifies archive checksums,
