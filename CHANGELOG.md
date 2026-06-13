@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+## [1.0.1] - 2026-06-13
+
+### Added
+
+- **Discovery-path regression test.** Loads the provider through the framework's real
+  extension-discovery dispatch (`defs()` pass-through, else `services()` via the DSL loader),
+  guarding against typed `Definition` objects being returned from `services()` — a regression the
+  existing `Container::load()`-based tests cannot catch.
+
+### Fixed
+
+- **Health-check false greens.** Archive health checks now surface archive database/query failures
+  as unhealthy issues instead of logging them and returning empty metrics.
+- **Operator documentation.** README/config wording now documents plaintext archive behavior without
+  an encryption key, the 32-byte key requirement, default table allow/deny policy, redacted search
+  output, and that schedule config is consumed by CLI workflows rather than registering jobs.
+- **Archive storage and registry consistency.** Archive registry rows now record actual compression
+  and encryption state, and archive verification/deletion uses the configured archive storage disk
+  instead of raw filesystem calls.
+- **Sensitive archive search output.** `archive:manage search` now redacts sensitive record fields
+  by default and requires `--show-sensitive` before printing decrypted values such as email,
+  tokens, keys, or user/IP identifiers.
+- **Non-mutating health checks.** Archive health checks now report missing/corrupted archives without
+  rewriting registry status rows, and the CLI health command passes the active application context to
+  the checker.
+- **Private archive directories.** Service and CLI archive-directory creation now use owner-only
+  `0700` permissions instead of world-readable `0755`.
+- **Restore integrity and archive payload bounds.** Restore now always verifies archive checksums,
+  enforces configured archive-size limits before and after decompression, and rejects encryption keys
+  that are not exactly 32 bytes raw or base64-decoded.
+- **Archive CLI destructive-operation guardrails.** `archive:manage archive` now rejects non-positive
+  retention windows, reports the actual matching row count during `--dry-run`, and requires
+  interactive confirmation unless `--force` is provided.
+- **Destructive archive safety.** Archive operations now enforce explicit allowed/denied table policy,
+  honor per-table retention `date_column` settings, wrap archive registration/search/delete in a
+  transaction, and hard-delete only the primary keys captured in the exported snapshot.
+- **Boot compatibility with framework 1.55.** The service provider declared its bindings via the
+  DSL `services()` method but returned strongly-typed `DefinitionInterface` objects, which the
+  framework's DSL service loader rejects (`"Service '<id>' must be an array"`). Under framework
+  1.55 this threw during boot in dev/test and silently dropped the bindings in production. The
+  method is now `defs()`, the strongly-typed pass-through path that accepts `DefinitionInterface`
+  objects.
+
 ## [1.0.0] - 2026-06-07 — Initial release (extracted from Glueful framework 1.52.0)
 
 Data-lifecycle archiving, extracted from framework core in **Glueful framework 1.52.0**.

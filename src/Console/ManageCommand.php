@@ -111,10 +111,22 @@ class ManageCommand extends BaseCommand
                  'table'
              )
              ->addOption(
+                 'show-sensitive',
+                 null,
+                 InputOption::VALUE_NONE,
+                 'Show decrypted archive record values without redacting sensitive fields'
+             )
+             ->addOption(
                  'dry-run',
                  'd',
                  InputOption::VALUE_NONE,
                  'Show what would be done without executing'
+             )
+             ->addOption(
+                 'force',
+                 null,
+                 InputOption::VALUE_NONE,
+                 'Execute destructive archive operations without interactive confirmation'
              )
              ->addOption(
                  'backup',
@@ -202,8 +214,14 @@ class ManageCommand extends BaseCommand
             return self::FAILURE;
         }
 
-        $days = (int) $input->getArgument('days');
+        $days = $this->parsePositiveDays($input->getArgument('days'));
+        if ($days === null) {
+            $this->io->error('Days must be a positive integer');
+            return self::FAILURE;
+        }
+
         $dryRun = $input->getOption('dry-run');
+        $force = $input->getOption('force');
         $backup = $input->getOption('backup');
         $compress = $input->getOption('compress');
         $verifyIntegrity = $input->getOption('verify-integrity');
@@ -219,6 +237,8 @@ class ManageCommand extends BaseCommand
 
         // Pre-archive checks
         $this->performPreArchiveChecks($table, $cutoffDate);
+        $candidateCount = $this->archiveService->countArchivableRows($table, $cutoffDate);
+        $this->io->text('Matching records: ' . number_format($candidateCount));
 
         if ((bool) $backup && !(bool) $dryRun) {
             $this->createTableBackup($table);
@@ -226,6 +246,17 @@ class ManageCommand extends BaseCommand
 
         if ((bool) $dryRun) {
             $this->io->success('Dry run completed. Use without --dry-run to execute.');
+            return self::SUCCESS;
+        }
+
+        $confirmationMessage = sprintf(
+            'Archive and delete %s matching records from %s?',
+            number_format($candidateCount),
+            $table
+        );
+        $confirmed = (bool) $force || $this->io->confirm($confirmationMessage, false);
+        if (!$confirmed) {
+            $this->io->warning('Archive cancelled');
             return self::SUCCESS;
         }
 
@@ -262,6 +293,21 @@ class ManageCommand extends BaseCommand
         }
 
         return self::SUCCESS;
+    }
+
+    private function parsePositiveDays(mixed $value): ?int
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $days = (string) $value;
+        if (!ctype_digit($days)) {
+            return null;
+        }
+
+        $parsed = (int) $days;
+        return $parsed > 0 ? $parsed : null;
     }
 
     private function executeStatus(InputInterface $input): int
@@ -358,7 +404,7 @@ class ManageCommand extends BaseCommand
 
         if ($results->records !== []) {
             $format = $input->getOption('format');
-            $this->displaySearchResults($results->records, $format);
+            $this->displaySearchResults($results->records, $format, (bool) $input->getOption('show-sensitive'));
         } else {
             $this->io->warning('No records found matching the search criteria');
         }
@@ -395,7 +441,9 @@ class ManageCommand extends BaseCommand
 
         try {
             $healthChecker = new ArchiveHealthChecker(
-                $this->getService(\Glueful\Database\Connection::class)
+                $this->getService(\Glueful\Database\Connection::class),
+                [],
+                $this->getContext()
             );
 
             $report = $healthChecker->getDetailedHealthReport();
@@ -630,7 +678,7 @@ class ManageCommand extends BaseCommand
         $storagePath = base_path($this->getContext(), 'storage/archives');
         $archiveDir = config($this->getContext(), 'archive.storage.path', $storagePath);
         if (!is_dir($archiveDir)) {
-            @mkdir($archiveDir, 0755, true);
+            @mkdir($archiveDir, 0700, true);
         }
 
         $freeSpace = disk_free_space($archiveDir);
@@ -706,8 +754,10 @@ class ManageCommand extends BaseCommand
     /**
      * @param array<array<string, mixed>> $records
      */
-    private function displaySearchResults(array $records, string $format): void
+    private function displaySearchResults(array $records, string $format, bool $showSensitive): void
     {
+        $records = $showSensitive ? $records : $this->redactSensitiveRecords($records);
+
         switch ($format) {
             case 'json':
                 $this->io->text((string) json_encode($records, JSON_PRETTY_PRINT));
@@ -724,6 +774,51 @@ class ManageCommand extends BaseCommand
                 }
                 break;
         }
+    }
+
+    /**
+     * @param array<array<string, mixed>> $records
+     * @return array<array<string, mixed>>
+     */
+    private function redactSensitiveRecords(array $records): array
+    {
+        return array_map(
+            fn (array $record): array => $this->redactSensitiveValues($record),
+            $records
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $record
+     * @return array<string, mixed>
+     */
+    private function redactSensitiveValues(array $record): array
+    {
+        foreach ($record as $key => $value) {
+            if ($this->isSensitiveField((string) $key)) {
+                $record[$key] = '[redacted]';
+                continue;
+            }
+
+            if (is_array($value)) {
+                /** @var array<string, mixed> $value */
+                $record[$key] = $this->redactSensitiveValues($value);
+            }
+        }
+
+        return $record;
+    }
+
+    private function isSensitiveField(string $key): bool
+    {
+        $normalized = strtolower($key);
+        foreach (['email', 'phone', 'token', 'secret', 'password', 'key', 'ip_address', 'user_uuid'] as $needle) {
+            if (str_contains($normalized, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

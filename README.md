@@ -23,7 +23,7 @@ you explicitly opt in via `ARCHIVE_DATABASE_SCHEMA` (→ `archive.enabled`).
 - **Search**: query across compressed archives by user, endpoint, action, IP,
   and date range, backed by a per-archive search index built at archive time
 - **Verification & integrity**: SHA-256 checksums with on-demand `verifyArchive()`
-  and corruption flagging
+  and mandatory restore-time checksum verification
 - **Table growth tracking**: record row counts / sizes per table and surface which
   tables exceed configured row/age thresholds and need archiving
 - **`archive:manage` CLI**: `archive`, `status`, `search`, `verify`, `health`,
@@ -119,7 +119,7 @@ ARCHIVE_DATABASE_SCHEMA=true
 ARCHIVE_COMPRESSION=gzip
 ARCHIVE_COMPRESSION_LEVEL=9
 
-# Encryption (AES-256-GCM) — enabled when a key is present
+# Encryption (AES-256-GCM) — enabled when a 32-byte raw or base64-decoded key is present
 ARCHIVE_ENCRYPTION_KEY=
 
 # Processing
@@ -135,16 +135,20 @@ ARCHIVE_MAX_SIZE=1073741824   # 1GB
 ARCHIVE_ENABLE_SEARCH_INDEX=true
 ARCHIVE_MAX_SEARCH_RESULTS=1000
 
-# Scheduling (used by the auto/track workflows)
+# Scheduling preferences for the CLI auto/track workflows; this does not register
+# a framework scheduler job by itself.
 ARCHIVE_AUTO_ENABLED=true
 ARCHIVE_FREQUENCY=weekly
 ARCHIVE_MAX_PER_RUN=10
 ```
 
 `config/archive.php` also defines `retention_policies` (per-table archive age /
-row thresholds for `audit_logs`, `api_metrics`, `auth_sessions`, etc.),
+row thresholds for `audit_logs`, `api_metrics`, `api_metrics_daily`,
+`api_rate_limits`, and `notifications`), `allowed_tables`, `denied_tables`,
 `monitoring` (health-check and alerting thresholds), `schedule`, and `backup`
-sections — see the file for the full set of `ARCHIVE_*` overrides.
+sections — see the file for the full set of `ARCHIVE_*` overrides. Identity and
+system tables such as `users`, `auth_sessions`, `api_keys`, and archive metadata
+tables are denied by default.
 
 ## Usage
 
@@ -158,7 +162,8 @@ is the action (default `status`):
 php glueful archive:manage status
 
 # Archive rows in a table older than N days (default 90)
-php glueful archive:manage archive audit_logs 90
+php glueful archive:manage archive audit_logs 90 --dry-run
+php glueful archive:manage archive audit_logs 90 --force
 
 # Search across archives
 php glueful archive:manage search --user=<uuid> --start-date=2026-01-01 --limit=20
@@ -174,7 +179,13 @@ php glueful archive:manage track audit_logs
 ```
 
 Useful options: `--uuid`, `--user`, `--endpoint`, `--start-date`, `--end-date`,
-`--limit`, `--format` (`table|json|csv`), and `--dry-run`.
+`--limit`, `--format` (`table|json|csv`), `--dry-run`, `--force`, and
+`--show-sensitive`. Search output redacts sensitive fields by default; use
+`--show-sensitive` only in a trusted operator session.
+
+Archive files are compressed plaintext unless `ARCHIVE_ENCRYPTION_KEY` is set.
+Keep the archive storage path outside the web root, restrict filesystem access,
+and set a 32-byte key for tables that may contain PII or regulated data.
 
 ### Programmatic (`ArchiveService`)
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Glueful\Extensions\Archive\Tests\Integration;
 
 use Glueful\Database\Connection;
+use Glueful\Extensions\Archive\ArchiveHealthChecker;
 use Glueful\Extensions\Archive\ArchiveService;
 use Glueful\Extensions\Archive\DTOs\ArchiveRestoreOptions;
 use PHPUnit\Framework\TestCase;
@@ -52,6 +53,8 @@ final class ArchiveRestoreTest extends TestCase
                 record_count INTEGER,
                 file_path TEXT,
                 file_size INTEGER,
+                compression_type TEXT DEFAULT "gzip",
+                encryption_enabled INTEGER DEFAULT 1,
                 checksum_sha256 TEXT,
                 metadata TEXT,
                 status TEXT DEFAULT "completed",
@@ -84,6 +87,22 @@ final class ArchiveRestoreTest extends TestCase
             )'
         );
 
+        $pdo->exec(
+            'CREATE TABLE api_metrics_daily (
+                uuid TEXT PRIMARY KEY,
+                payload TEXT,
+                metric_date TEXT,
+                created_at TEXT
+            )'
+        );
+
+        $pdo->exec(
+            'CREATE TABLE auth_sessions (
+                uuid TEXT PRIMARY KEY,
+                created_at TEXT
+            )'
+        );
+
         $this->service = new ArchiveService(
             connection: $this->connection,
             config: [
@@ -91,6 +110,11 @@ final class ArchiveRestoreTest extends TestCase
                 'compression' => 'gzip',
                 'verify_checksums' => true,
                 'chunk_size' => 100,
+                'allowed_tables' => ['sample_records', 'api_metrics_daily'],
+                'retention_policies' => [
+                    'sample_records' => ['date_column' => 'created_at'],
+                    'api_metrics_daily' => ['date_column' => 'metric_date'],
+                ],
             ]
         );
     }
@@ -127,8 +151,9 @@ final class ArchiveRestoreTest extends TestCase
     {
         $this->seedRecords(3);
         $archiveUuid = $this->archiveOldRows();
-        // Leave one existing row in place, delete the rest
-        $this->connection->getPDO()->exec("DELETE FROM sample_records WHERE uuid <> 'rec_001'");
+        $this->connection->getPDO()->exec(
+            "INSERT INTO sample_records (uuid, payload, created_at) VALUES ('rec_001', 'existing', '2024-01-01')"
+        );
 
         $result = $this->service->restoreFromArchive(
             $archiveUuid,
@@ -244,6 +269,172 @@ final class ArchiveRestoreTest extends TestCase
         self::assertStringContainsString('Auto-creating', $result->error);
     }
 
+    public function testArchiveRejectsDeniedSystemTables(): void
+    {
+        $result = $this->service->archiveTable('auth_sessions', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertFalse($result->success);
+        self::assertNotNull($result->error);
+        self::assertStringContainsString('not allowed', $result->error);
+    }
+
+    public function testArchiveDirectoryIsCreatedPrivate(): void
+    {
+        self::assertSame(0700, fileperms($this->archiveDir) & 0777);
+    }
+
+    public function testArchiveUsesConfiguredDateColumnForExportAndDelete(): void
+    {
+        $stmt = $this->connection->getPDO()->prepare(
+            'INSERT INTO api_metrics_daily (uuid, payload, metric_date, created_at) VALUES (?, ?, ?, ?)'
+        );
+        $stmt->execute(['old-metric', 'old', '2020-01-01', '2035-01-01 00:00:00']);
+        $stmt->execute(['new-metric', 'new', '2035-01-01', '2020-01-01 00:00:00']);
+
+        $result = $this->service->archiveTable('api_metrics_daily', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertTrue($result->success, $result->error ?? '');
+
+        $rows = $this->connection->getPDO()
+            ->query('SELECT uuid FROM api_metrics_daily ORDER BY uuid')
+            ->fetchAll(\PDO::FETCH_COLUMN);
+
+        self::assertSame(['new-metric'], $rows);
+    }
+
+    public function testArchiveDeletesOnlyCapturedPrimaryKeys(): void
+    {
+        $this->seedRecords(1);
+
+        $pdo = $this->connection->getPDO();
+        $trigger = <<<'SQL'
+CREATE TRIGGER insert_newer_record_after_archive_delete
+BEFORE DELETE ON sample_records
+WHEN OLD.uuid = 'rec_001'
+BEGIN
+    INSERT INTO sample_records (uuid, payload, created_at)
+    VALUES ('late_insert', 'late', '2020-01-01 00:00:00');
+END
+SQL;
+        $pdo->exec($trigger);
+
+        $result = $this->service->archiveTable('sample_records', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertTrue($result->success, $result->error ?? '');
+        self::assertSame(['late_insert'], array_column($this->fetchAllRecords(), 'uuid'));
+    }
+
+    public function testRestoreAlwaysRejectsChecksumMismatch(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        $tampered = gzencode((string) json_encode([
+            'metadata' => ['compression' => 'gzip', 'encryption_enabled' => false],
+            'data' => [
+                ['uuid' => 'rec_999', 'payload' => 'tampered', 'created_at' => '2020-01-01 00:00:00'],
+            ],
+        ]));
+        self::assertIsString($tampered);
+        file_put_contents((string) $archive['file_path'], $tampered);
+        $this->truncateSourceTable();
+
+        $service = $this->makeService(['verify_checksums' => false]);
+        $result = $service->restoreFromArchive($archiveUuid);
+
+        self::assertFalse($result->success);
+        self::assertStringContainsString('checksum mismatch', (string) $result->error);
+        self::assertSame([], $this->fetchAllRecords());
+    }
+
+    public function testEncryptionKeyMustBeExactlyThirtyTwoBytes(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Archive encryption key must be exactly 32 bytes');
+
+        $this->makeService(['encryption_key' => 'short']);
+    }
+
+    public function testRestoreRejectsArchivesThatExpandPastConfiguredSizeLimit(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $this->truncateSourceTable();
+
+        $service = $this->makeService(['max_archive_size' => 32]);
+        $result = $service->restoreFromArchive($archiveUuid);
+
+        self::assertFalse($result->success);
+        self::assertStringContainsString('exceeds maximum archive size', (string) $result->error);
+        self::assertSame([], $this->fetchAllRecords());
+    }
+
+    public function testHealthCheckReportsMissingArchivesWithoutMutatingStatus(): void
+    {
+        $this->connection->getPDO()->prepare(
+            'INSERT INTO archive_registry
+                (uuid, table_name, archive_date, record_count, file_path, file_size, checksum_sha256, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            'missing-archive',
+            'sample_records',
+            '2026-01-01',
+            1,
+            $this->archiveDir . '/missing.gz',
+            10,
+            'checksum',
+            'completed',
+            '2026-01-01 00:00:00',
+        ]);
+
+        $checker = new ArchiveHealthChecker($this->connection, ['storage_path' => $this->archiveDir]);
+        $result = $checker->performHealthCheck();
+
+        self::assertFalse($result->healthy);
+        self::assertContains('missing-archive', $result->metrics['missing_archives'] ?? []);
+        self::assertSame('completed', $this->fetchArchiveRecord('missing-archive')['status']);
+    }
+
+    public function testArchiveRegistryRecordsActualCompressionAndEncryptionState(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        self::assertSame('gzip', $archive['compression_type']);
+        self::assertSame(0, (int) $archive['encryption_enabled']);
+    }
+
+    public function testHealthCheckReportsDatabaseErrorsAsUnhealthy(): void
+    {
+        $this->connection->getPDO()->exec('DROP TABLE archive_registry');
+
+        $checker = new ArchiveHealthChecker($this->connection, ['storage_path' => $this->archiveDir]);
+        $result = $checker->performHealthCheck();
+
+        self::assertFalse($result->healthy);
+        self::assertNotEmpty($result->issues);
+        self::assertStringContainsString('Health check error', $result->issues[0]);
+    }
+
+    public function testVerifyAndDeleteArchiveUseStoredArchiveFile(): void
+    {
+        $this->seedRecords(1);
+        $archiveUuid = $this->archiveOldRows();
+        $archive = $this->fetchArchiveRecord($archiveUuid);
+
+        self::assertTrue($this->service->verifyArchive($archiveUuid));
+        self::assertTrue(file_exists((string) $archive['file_path']));
+
+        self::assertTrue($this->service->deleteArchive($archiveUuid));
+        self::assertFalse(file_exists((string) $archive['file_path']));
+        self::assertSame([], $this->connection->getPDO()
+            ->query("SELECT uuid FROM archive_registry WHERE uuid = '{$archiveUuid}'")
+            ?->fetchAll(\PDO::FETCH_COLUMN));
+    }
+
     private function seedRecords(int $count): void
     {
         $stmt = $this->connection->getPDO()->prepare(
@@ -266,6 +457,40 @@ final class ArchiveRestoreTest extends TestCase
         self::assertNotNull($result->archiveUuid);
 
         return (string) $result->archiveUuid;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function fetchArchiveRecord(string $archiveUuid): array
+    {
+        $stmt = $this->connection->getPDO()->prepare('SELECT * FROM archive_registry WHERE uuid = ?');
+        $stmt->execute([$archiveUuid]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        self::assertIsArray($row);
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function makeService(array $config): ArchiveService
+    {
+        return new ArchiveService(
+            connection: $this->connection,
+            config: array_merge([
+                'storage_path' => $this->archiveDir,
+                'compression' => 'gzip',
+                'verify_checksums' => true,
+                'chunk_size' => 100,
+                'allowed_tables' => ['sample_records', 'api_metrics_daily'],
+                'retention_policies' => [
+                    'sample_records' => ['date_column' => 'created_at'],
+                    'api_metrics_daily' => ['date_column' => 'metric_date'],
+                ],
+            ], $config)
+        );
     }
 
     private function truncateSourceTable(): void
