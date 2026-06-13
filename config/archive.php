@@ -143,18 +143,37 @@ return [
             'priority' => 'low',
             'compliance_period_years' => 1,
         ],
+    ],
 
-        'auth_sessions' => [
-            'archive_after_days' => (int) (env('ARCHIVE_SESSIONS_DAYS') ?? 30),
-            'threshold_rows' => (int) (env('ARCHIVE_SESSIONS_ROWS') ?? 100000),
-            'auto_archive' => filter_var(
-                env('ARCHIVE_SESSIONS_AUTO') ?? 'true',
-                FILTER_VALIDATE_BOOLEAN
-            ),
-            'date_column' => 'created_at',
-            'priority' => 'low',
-            'compliance_period_years' => 1,
-        ],
+    /*
+    |--------------------------------------------------------------------------
+    | Table Safety Policy
+    |--------------------------------------------------------------------------
+    |
+    | Archive deletes source rows after exporting and verifying the archive.
+    | Keep the default target set explicit, and block identity/system tables
+    | even if an operator names them directly.
+    |
+    */
+    'allowed_tables' => [
+        'audit_logs',
+        'api_metrics',
+        'api_metrics_daily',
+        'api_rate_limits',
+        'notifications',
+    ],
+    'denied_tables' => [
+        'users',
+        'profiles',
+        'auth_sessions',
+        'api_keys',
+        'refresh_tokens',
+        'password_reset_tokens',
+        'tenants',
+        'migrations',
+        'archive_registry',
+        'archive_search_index',
+        'archive_table_stats',
     ],
 
     /*

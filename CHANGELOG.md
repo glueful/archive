@@ -15,6 +15,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Destructive archive safety.** Archive operations now enforce explicit allowed/denied table policy,
+  honor per-table retention `date_column` settings, wrap archive registration/search/delete in a
+  transaction, and hard-delete only the primary keys captured in the exported snapshot.
 - **Boot compatibility with framework 1.55.** The service provider declared its bindings via the
   DSL `services()` method but returned strongly-typed `DefinitionInterface` objects, which the
   framework's DSL service loader rejects (`"Service '<id>' must be an array"`). Under framework

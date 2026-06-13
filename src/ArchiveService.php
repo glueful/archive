@@ -61,7 +61,22 @@ class ArchiveService implements ArchiveServiceInterface
             'encryption_key' => $_ENV['ARCHIVE_ENCRYPTION_KEY'] ?? null,
             'compression' => 'gzip',
             'chunk_size' => 10000,
-            'verify_checksums' => true
+            'verify_checksums' => true,
+            'retention_policies' => [],
+            'allowed_tables' => [],
+            'denied_tables' => [
+                'users',
+                'profiles',
+                'auth_sessions',
+                'api_keys',
+                'refresh_tokens',
+                'password_reset_tokens',
+                'tenants',
+                'migrations',
+                'archive_registry',
+                'archive_search_index',
+                'archive_table_stats',
+            ],
         ], $config);
 
         $this->archiveBasePath = $this->config['storage_path'];
@@ -104,61 +119,70 @@ class ArchiveService implements ArchiveServiceInterface
         $archiveUuid = Utils::generateNanoID();
 
         try {
-            // 1. Validate table exists
-            if (!$this->validateTable($table)) {
-                return ArchiveResult::failure("Table {$table} does not exist");
-            }
+            $this->assertTableCanBeArchived($table);
 
-            // 2. Export data
-            $exportResult = $this->exportTableData($table, $cutoffDate);
-            if ($exportResult->recordCount === 0) {
-                return ArchiveResult::failure("No records found to archive");
-            }
+            /** @var ArchiveResult $result */
+            $result = $this->db->transaction(function () use ($table, $cutoffDate, $archiveUuid): ArchiveResult {
+                $dateColumn = $this->getArchiveDateColumn($table);
 
-            // 3. Compress and encrypt
-            $archiveFile = $this->compressAndEncrypt($exportResult);
+                // 1. Validate table exists
+                if (!$this->validateTable($table)) {
+                    return ArchiveResult::failure("Table {$table} does not exist");
+                }
 
-            // 4. Register archive
-            $this->registerArchive([
-                'uuid' => $archiveUuid,
-                'table_name' => $table,
-                'archive_date' => date('Y-m-d'),
-                'period_start' => $this->getEarliestRecord($table, $cutoffDate),
-                'period_end' => $cutoffDate->format('Y-m-d H:i:s'),
-                'record_count' => $exportResult->recordCount,
-                'file_path' => $archiveFile->path,
-                'file_size' => $archiveFile->size,
-                'checksum_sha256' => $archiveFile->checksum,
-                'metadata' => json_encode($exportResult->metadata)
-            ]);
+                // 2. Export data
+                $exportResult = $this->exportTableData($table, $cutoffDate, $dateColumn);
+                if ($exportResult->recordCount === 0) {
+                    return ArchiveResult::failure("No records found to archive");
+                }
 
-            // 5. Create search index
-            $this->createSearchIndex($archiveUuid, $exportResult->data);
+                // 3. Compress and encrypt
+                $archiveFile = $this->compressAndEncrypt($exportResult);
 
-            // 6. Verify archive
-            if (!$this->verifyArchive($archiveUuid)) {
-                throw BusinessLogicException::operationNotAllowed(
-                    'archive_verification',
-                    'Archive verification failed'
+                // 4. Register archive
+                $this->registerArchive([
+                    'uuid' => $archiveUuid,
+                    'table_name' => $table,
+                    'archive_date' => date('Y-m-d'),
+                    'period_start' => $this->getEarliestRecord($table, $cutoffDate, $dateColumn),
+                    'period_end' => $cutoffDate->format('Y-m-d H:i:s'),
+                    'record_count' => $exportResult->recordCount,
+                    'file_path' => $archiveFile->path,
+                    'file_size' => $archiveFile->size,
+                    'checksum_sha256' => $archiveFile->checksum,
+                    'metadata' => json_encode($exportResult->metadata)
+                ]);
+
+                // 5. Create search index
+                $this->createSearchIndex($archiveUuid, $exportResult->data);
+
+                // 6. Verify archive
+                if (!$this->verifyArchive($archiveUuid)) {
+                    throw BusinessLogicException::operationNotAllowed(
+                        'archive_verification',
+                        'Archive verification failed'
+                    );
+                }
+
+                // 7. Delete original data
+                $deletedCount = $this->deleteArchivedData($table, $exportResult->data);
+
+                // 8. Update archive status
+                $this->updateArchiveStatus($archiveUuid, 'completed');
+
+                // 9. Update table stats
+                $this->updateTableStats($table);
+
+                return ArchiveResult::success(
+                    $archiveUuid,
+                    $exportResult->recordCount,
+                    $archiveFile->size,
+                    $archiveFile->path,
+                    ['deleted_count' => $deletedCount]
                 );
-            }
+            });
 
-            // 7. Delete original data
-            $deletedCount = $this->deleteArchivedData($table, $cutoffDate);
-
-            // 8. Update archive status
-            $this->updateArchiveStatus($archiveUuid, 'completed');
-
-            // 9. Update table stats
-            $this->updateTableStats($table);
-
-            return ArchiveResult::success(
-                $archiveUuid,
-                $exportResult->recordCount,
-                $archiveFile->size,
-                $archiveFile->path,
-                ['deleted_count' => $deletedCount]
-            );
+            return $result;
         } catch (\Exception $e) {
             $this->cleanupFailedArchive($archiveUuid);
             error_log("Archive failed for table {$table}: " . $e->getMessage());
@@ -166,7 +190,7 @@ class ArchiveService implements ArchiveServiceInterface
         }
     }
 
-    private function exportTableData(string $table, \DateTime $cutoffDate): ExportResult
+    private function exportTableData(string $table, \DateTime $cutoffDate, string $dateColumn): ExportResult
     {
         $data = [];
         $recordCount = 0;
@@ -182,8 +206,8 @@ class ArchiveService implements ArchiveServiceInterface
         do {
             $chunk = $this->db->table($table)
                 ->select(['*'])
-                ->where('created_at', '<', $cutoffDate->format('Y-m-d H:i:s'))
-                ->orderBy('created_at', 'ASC')
+                ->where($dateColumn, '<', $cutoffDate->format('Y-m-d H:i:s'))
+                ->orderBy($dateColumn, 'ASC')
                 ->limit($chunkSize)
                 ->offset($offset)
                 ->get();
@@ -200,9 +224,10 @@ class ArchiveService implements ArchiveServiceInterface
             'schema' => $schema,
             'export_timestamp' => time(),
             'cutoff_date' => $cutoffDate->format('Y-m-d H:i:s'),
+            'date_column' => $dateColumn,
             'total_records' => $recordCount,
-            'first_record_date' => $data[0]['created_at'] ?? null,
-            'last_record_date' => end($data)['created_at'] ?? null,
+            'first_record_date' => $data[0][$dateColumn] ?? null,
+            'last_record_date' => end($data)[$dateColumn] ?? null,
             'compression' => $this->config['compression'],
             'encryption_enabled' => $this->encryptionKey !== null
         ];
@@ -796,21 +821,113 @@ class ArchiveService implements ArchiveServiceInterface
         }
     }
 
-    private function getEarliestRecord(string $table, \DateTime $cutoffDate): string
+    private function assertTableCanBeArchived(string $table): void
+    {
+        $deniedTables = $this->config['denied_tables'];
+        if (is_array($deniedTables) && in_array($table, $deniedTables, true)) {
+            throw BusinessLogicException::operationNotAllowed(
+                'archive_table_denied',
+                "Table {$table} is not allowed for archive operations"
+            );
+        }
+
+        $allowedTables = $this->config['allowed_tables'];
+        if (is_array($allowedTables) && $allowedTables !== [] && !in_array($table, $allowedTables, true)) {
+            throw BusinessLogicException::operationNotAllowed(
+                'archive_table_not_allowed',
+                "Table {$table} is not allowed for archive operations"
+            );
+        }
+    }
+
+    private function getArchiveDateColumn(string $table): string
+    {
+        $policies = $this->config['retention_policies'];
+        if (
+            is_array($policies) &&
+            isset($policies[$table]) &&
+            is_array($policies[$table]) &&
+            isset($policies[$table]['date_column']) &&
+            is_string($policies[$table]['date_column']) &&
+            $policies[$table]['date_column'] !== ''
+        ) {
+            return $policies[$table]['date_column'];
+        }
+
+        return 'created_at';
+    }
+
+    private function getEarliestRecord(string $table, \DateTime $cutoffDate, string $dateColumn): string
     {
         $earliest = $this->db->table($table)
-            ->selectRaw('MIN(created_at) as earliest')
-            ->where('created_at', '<', $cutoffDate->format('Y-m-d H:i:s'))
+            ->selectRaw("MIN({$this->db->getDriver()->wrapIdentifier($dateColumn)}) as earliest")
+            ->where($dateColumn, '<', $cutoffDate->format('Y-m-d H:i:s'))
             ->first();
 
         return $earliest['earliest'] ?? $cutoffDate->format('Y-m-d H:i:s');
     }
 
-    private function deleteArchivedData(string $table, \DateTime $cutoffDate): int
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function deleteArchivedData(string $table, array $rows): int
     {
-        return $this->db->table($table)
-            ->where('created_at', '<', $cutoffDate->format('Y-m-d H:i:s'))
-            ->delete();
+        $primaryKeyColumns = $this->getPrimaryKeyColumns($table);
+        if ($primaryKeyColumns === []) {
+            throw BusinessLogicException::operationNotAllowed(
+                'archive_missing_primary_key',
+                "Table {$table} cannot be archived safely without a primary key"
+            );
+        }
+
+        $deleted = 0;
+        $driver = $this->db->getDriver();
+        $quotedTable = $driver->wrapIdentifier($table);
+        $where = implode(
+            ' AND ',
+            array_map(
+                static fn (string $column): string => $driver->wrapIdentifier($column) . ' = ?',
+                $primaryKeyColumns
+            )
+        );
+        $statement = $this->db->getPDO()->prepare("DELETE FROM {$quotedTable} WHERE {$where}");
+
+        foreach ($rows as $row) {
+            $bindings = [];
+            foreach ($primaryKeyColumns as $column) {
+                if (!array_key_exists($column, $row)) {
+                    throw BusinessLogicException::operationNotAllowed(
+                        'archive_missing_primary_key_value',
+                        "Archive row is missing primary key column {$column}"
+                    );
+                }
+                $bindings[] = $row[$column];
+            }
+            $statement->execute($bindings);
+            $deleted += $statement->rowCount();
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function getPrimaryKeyColumns(string $table): array
+    {
+        if ($this->schemaManager === null) {
+            return [];
+        }
+
+        $columns = $this->schemaManager->getTableColumns($table);
+        $primary = [];
+        foreach ($columns as $definition) {
+            if (is_array($definition) && (bool) ($definition['is_primary'] ?? false)) {
+                $primary[] = (string) ($definition['name'] ?? '');
+            }
+        }
+
+        return array_values(array_filter($primary, static fn (string $column): bool => $column !== ''));
     }
 
     /**

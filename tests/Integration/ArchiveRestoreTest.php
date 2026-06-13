@@ -84,6 +84,22 @@ final class ArchiveRestoreTest extends TestCase
             )'
         );
 
+        $pdo->exec(
+            'CREATE TABLE api_metrics_daily (
+                uuid TEXT PRIMARY KEY,
+                payload TEXT,
+                metric_date TEXT,
+                created_at TEXT
+            )'
+        );
+
+        $pdo->exec(
+            'CREATE TABLE auth_sessions (
+                uuid TEXT PRIMARY KEY,
+                created_at TEXT
+            )'
+        );
+
         $this->service = new ArchiveService(
             connection: $this->connection,
             config: [
@@ -91,6 +107,11 @@ final class ArchiveRestoreTest extends TestCase
                 'compression' => 'gzip',
                 'verify_checksums' => true,
                 'chunk_size' => 100,
+                'allowed_tables' => ['sample_records', 'api_metrics_daily'],
+                'retention_policies' => [
+                    'sample_records' => ['date_column' => 'created_at'],
+                    'api_metrics_daily' => ['date_column' => 'metric_date'],
+                ],
             ]
         );
     }
@@ -127,8 +148,9 @@ final class ArchiveRestoreTest extends TestCase
     {
         $this->seedRecords(3);
         $archiveUuid = $this->archiveOldRows();
-        // Leave one existing row in place, delete the rest
-        $this->connection->getPDO()->exec("DELETE FROM sample_records WHERE uuid <> 'rec_001'");
+        $this->connection->getPDO()->exec(
+            "INSERT INTO sample_records (uuid, payload, created_at) VALUES ('rec_001', 'existing', '2024-01-01')"
+        );
 
         $result = $this->service->restoreFromArchive(
             $archiveUuid,
@@ -242,6 +264,56 @@ final class ArchiveRestoreTest extends TestCase
         self::assertFalse($result->success);
         self::assertNotNull($result->error);
         self::assertStringContainsString('Auto-creating', $result->error);
+    }
+
+    public function testArchiveRejectsDeniedSystemTables(): void
+    {
+        $result = $this->service->archiveTable('auth_sessions', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertFalse($result->success);
+        self::assertNotNull($result->error);
+        self::assertStringContainsString('not allowed', $result->error);
+    }
+
+    public function testArchiveUsesConfiguredDateColumnForExportAndDelete(): void
+    {
+        $stmt = $this->connection->getPDO()->prepare(
+            'INSERT INTO api_metrics_daily (uuid, payload, metric_date, created_at) VALUES (?, ?, ?, ?)'
+        );
+        $stmt->execute(['old-metric', 'old', '2020-01-01', '2035-01-01 00:00:00']);
+        $stmt->execute(['new-metric', 'new', '2035-01-01', '2020-01-01 00:00:00']);
+
+        $result = $this->service->archiveTable('api_metrics_daily', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertTrue($result->success, $result->error ?? '');
+
+        $rows = $this->connection->getPDO()
+            ->query('SELECT uuid FROM api_metrics_daily ORDER BY uuid')
+            ->fetchAll(\PDO::FETCH_COLUMN);
+
+        self::assertSame(['new-metric'], $rows);
+    }
+
+    public function testArchiveDeletesOnlyCapturedPrimaryKeys(): void
+    {
+        $this->seedRecords(1);
+
+        $pdo = $this->connection->getPDO();
+        $trigger = <<<'SQL'
+CREATE TRIGGER insert_newer_record_after_archive_delete
+BEFORE DELETE ON sample_records
+WHEN OLD.uuid = 'rec_001'
+BEGIN
+    INSERT INTO sample_records (uuid, payload, created_at)
+    VALUES ('late_insert', 'late', '2020-01-01 00:00:00');
+END
+SQL;
+        $pdo->exec($trigger);
+
+        $result = $this->service->archiveTable('sample_records', new \DateTime('2030-01-01 00:00:00'));
+
+        self::assertTrue($result->success, $result->error ?? '');
+        self::assertSame(['late_insert'], array_column($this->fetchAllRecords(), 'uuid'));
     }
 
     private function seedRecords(int $count): void
