@@ -670,7 +670,7 @@ class ManageCommand extends BaseCommand
         $storagePath = base_path($this->getContext(), 'storage/archives');
         $archiveDir = config($this->getContext(), 'archive.storage.path', $storagePath);
         if (!is_dir($archiveDir)) {
-            @mkdir($archiveDir, 0755, true);
+            @mkdir($archiveDir, 0700, true);
         }
 
         $freeSpace = disk_free_space($archiveDir);

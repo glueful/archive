@@ -15,6 +15,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- **Private archive directories.** Service and CLI archive-directory creation now use owner-only
+  `0700` permissions instead of world-readable `0755`.
 - **Restore integrity and archive payload bounds.** Restore now always verifies archive checksums,
   enforces configured archive-size limits before and after decompression, and rejects encryption keys
   that are not exactly 32 bytes raw or base64-decoded.

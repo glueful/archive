@@ -275,6 +275,11 @@ final class ArchiveRestoreTest extends TestCase
         self::assertStringContainsString('not allowed', $result->error);
     }
 
+    public function testArchiveDirectoryIsCreatedPrivate(): void
+    {
+        self::assertSame(0700, fileperms($this->archiveDir) & 0777);
+    }
+
     public function testArchiveUsesConfiguredDateColumnForExportAndDelete(): void
     {
         $stmt = $this->connection->getPDO()->prepare(

@@ -86,7 +86,7 @@ class ArchiveService implements ArchiveServiceInterface
         // Ensure archive directory exists as local root for the disk
         if (
             !is_dir($this->archiveBasePath) &&
-            !mkdir($concurrentDirectory = $this->archiveBasePath, 0755, true) &&
+            !mkdir($concurrentDirectory = $this->archiveBasePath, 0700, true) &&
             !is_dir($concurrentDirectory)
         ) {
             throw new \RuntimeException('Cannot create archive directory: ' . $this->archiveBasePath);
