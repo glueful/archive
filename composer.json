@@ -3,8 +3,18 @@
     "description": "Data-lifecycle archiving for Glueful (table archiving, retention, compression, restore).",
     "type": "glueful-extension",
     "license": "MIT",
-    "authors": [{ "name": "Michael Tawiah Sowah", "email": "michael@glueful.dev" }],
-    "keywords": ["archive", "retention", "data-lifecycle", "glueful"],
+    "authors": [
+        {
+            "name": "Michael Tawiah Sowah",
+            "email": "michael@glueful.dev"
+        }
+    ],
+    "keywords": [
+        "archive",
+        "retention",
+        "data-lifecycle",
+        "glueful"
+    ],
     "require": {
         "php": "^8.3"
     },
@@ -16,11 +26,17 @@
     },
     "homepage": "https://github.com/glueful/archive",
     "autoload": {
-        "psr-4": { "Glueful\\Extensions\\Archive\\": "src/" },
-        "classmap": ["migrations/"]
+        "psr-4": {
+            "Glueful\\Extensions\\Archive\\": "src/"
+        },
+        "classmap": [
+            "migrations/"
+        ]
     },
     "autoload-dev": {
-        "psr-4": { "Glueful\\Extensions\\Archive\\Tests\\": "tests/" }
+        "psr-4": {
+            "Glueful\\Extensions\\Archive\\Tests\\": "tests/"
+        }
     },
     "scripts": {
         "test": "vendor/bin/phpunit",
@@ -33,12 +49,20 @@
             "name": "Archive",
             "displayName": "Archive",
             "description": "Data-lifecycle archiving for Glueful.",
-            "version": "1.0.1",
-            "categories": ["data-lifecycle", "archive"],
+            "version": "1.0.2",
+            "categories": [
+                "data-lifecycle",
+                "archive"
+            ],
             "publisher": "glueful-team",
             "provider": "Glueful\\Extensions\\Archive\\ArchiveServiceProvider",
-            "requires": { "glueful": ">=1.56.0", "extensions": [] }
+            "requires": {
+                "glueful": ">=1.56.0",
+                "extensions": []
+            }
         }
     },
-    "config": { "sort-packages": true }
+    "config": {
+        "sort-packages": true
+    }
 }

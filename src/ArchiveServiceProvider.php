@@ -55,7 +55,10 @@ final class ArchiveServiceProvider extends \Glueful\Extensions\ServiceProvider
     public function register(ApplicationContext $context): void
     {
         $this->mergeConfig('archive', require __DIR__ . '/../config/archive.php');
+    }
 
+    public function boot(ApplicationContext $context): void
+    {
         // Self-gated schema: only register migrations when the opt-in gate is on.
         if ((bool) config($context, 'archive.enabled', false) === true) {
             $this->loadMigrationsFrom(
@@ -64,10 +67,7 @@ final class ArchiveServiceProvider extends \Glueful\Extensions\ServiceProvider
                 'glueful/archive'
             );
         }
-    }
 
-    public function boot(ApplicationContext $context): void
-    {
         $this->discoverCommands('Glueful\\Extensions\\Archive\\Console', __DIR__ . '/Console');
     }
 }
