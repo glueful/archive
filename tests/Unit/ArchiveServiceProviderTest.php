@@ -126,7 +126,7 @@ final class ArchiveServiceProviderTest extends TestCase
         );
     }
 
-    public function testRegisterDoesNotLoadMigrationsWhenDisabled(): void
+    public function testBootDoesNotLoadMigrationsWhenDisabled(): void
     {
         $migrationManager = $this->createMock(MigrationManager::class);
         $migrationManager->expects(self::never())->method('addMigrationPath');
@@ -139,9 +139,10 @@ final class ArchiveServiceProviderTest extends TestCase
 
         $provider = new ArchiveServiceProvider($container);
         $provider->register($context);
+        $provider->boot($context);
     }
 
-    public function testRegisterLoadsMigrationsWithCorrectSourceAndPriorityWhenEnabled(): void
+    public function testBootLoadsMigrationsWithCorrectSourceAndPriorityWhenEnabled(): void
     {
         $migrationsDir = realpath(__DIR__ . '/../../migrations');
         self::assertIsString($migrationsDir);
@@ -163,6 +164,7 @@ final class ArchiveServiceProviderTest extends TestCase
 
         $provider = new ArchiveServiceProvider($container);
         $provider->register($context);
+        $provider->boot($context);
     }
 
     /**
