@@ -12,7 +12,6 @@ use Glueful\Container\Definition\FactoryDefinition;
 use Glueful\Container\Loader\DefaultServicesLoader;
 use Glueful\Database\Connection;
 use Glueful\Database\Migrations\MigrationManager;
-use Glueful\Database\Migrations\MigrationPriority;
 use Glueful\Database\Schema\Interfaces\SchemaBuilderInterface;
 use Glueful\Extensions\Archive\ArchiveService;
 use Glueful\Extensions\Archive\ArchiveServiceInterface;
@@ -126,45 +125,26 @@ final class ArchiveServiceProviderTest extends TestCase
         );
     }
 
-    public function testBootDoesNotLoadMigrationsWhenDisabled(): void
+    /**
+     * Migrations are manifest-owned (schema-on-enable): provider boot must never
+     * register the migrations path, even with the archive.enabled gate on.
+     */
+    public function testBootNeverRegistersMigrationsRegardlessOfGate(): void
     {
-        $migrationManager = $this->createMock(MigrationManager::class);
-        $migrationManager->expects(self::never())->method('addMigrationPath');
+        foreach ([true, false] as $enabled) {
+            $migrationManager = $this->createMock(MigrationManager::class);
+            $migrationManager->expects(self::never())->method('addMigrationPath');
 
-        $context = $this->makeContext([
-            'enabled' => false,
-            'storage' => ['path' => sys_get_temp_dir() . '/archive-noop'],
-        ]);
-        $container = $this->makeContainer($context, $migrationManager);
+            $context = $this->makeContext([
+                'enabled' => $enabled,
+                'storage' => ['path' => sys_get_temp_dir() . '/archive-noop'],
+            ]);
+            $container = $this->makeContainer($context, $migrationManager);
 
-        $provider = new ArchiveServiceProvider($container);
-        $provider->register($context);
-        $provider->boot($context);
-    }
-
-    public function testBootLoadsMigrationsWithCorrectSourceAndPriorityWhenEnabled(): void
-    {
-        $migrationsDir = realpath(__DIR__ . '/../../migrations');
-        self::assertIsString($migrationsDir);
-
-        $migrationManager = $this->createMock(MigrationManager::class);
-        $migrationManager->expects(self::once())
-            ->method('addMigrationPath')
-            ->with(
-                self::callback(static fn (string $dir): bool => realpath($dir) === $migrationsDir),
-                self::identicalTo(MigrationPriority::DEFAULT),
-                self::identicalTo('glueful/archive')
-            );
-
-        $context = $this->makeContext([
-            'enabled' => true,
-            'storage' => ['path' => sys_get_temp_dir() . '/archive-noop'],
-        ]);
-        $container = $this->makeContainer($context, $migrationManager);
-
-        $provider = new ArchiveServiceProvider($container);
-        $provider->register($context);
-        $provider->boot($context);
+            $provider = new ArchiveServiceProvider($container);
+            $provider->register($context);
+            $provider->boot($context);
+        }
     }
 
     /**

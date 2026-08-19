@@ -7,7 +7,6 @@ namespace Glueful\Extensions\Archive;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Container\Definition\AliasDefinition;
 use Glueful\Container\Definition\FactoryDefinition;
-use Glueful\Database\Migrations\MigrationPriority;
 use Glueful\Database\Schema\Interfaces\SchemaBuilderInterface;
 use Glueful\Security\RandomStringGenerator;
 use Psr\Container\ContainerInterface;
@@ -59,15 +58,6 @@ final class ArchiveServiceProvider extends \Glueful\Extensions\ServiceProvider
 
     public function boot(ApplicationContext $context): void
     {
-        // Self-gated schema: only register migrations when the opt-in gate is on.
-        if ((bool) config($context, 'archive.enabled', false) === true) {
-            $this->loadMigrationsFrom(
-                __DIR__ . '/../migrations',
-                MigrationPriority::DEFAULT,
-                'glueful/archive'
-            );
-        }
-
         $this->discoverCommands('Glueful\\Extensions\\Archive\\Console', __DIR__ . '/Console');
     }
 }
